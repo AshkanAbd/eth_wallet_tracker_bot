@@ -66,6 +66,8 @@ impl DataRepository for SqliteDb {
         if let Err(e) = result {
             panic!("Error on configuring transactions table: {}", e);
         }
+
+        connection.execute(r#"alter table transactions add decimal integer default 0;"#).unwrap_or_default();
     }
 
     fn connected(&self) -> bool {
@@ -118,6 +120,31 @@ impl DataRepository for SqliteDb {
         };
     }
 
+    fn get_all_user(&self) -> Vec<User> {
+        if !self.connected() {
+            panic!("Connection error.");
+        }
+
+        let connection = self.connection.as_ref().unwrap();
+
+        logger!("-> retrieving all users from db...");
+
+        let mut statement = connection.prepare(r#"select * from users;"#).unwrap();
+
+        let mut users = vec![];
+
+        while let State::Row = statement.next().unwrap() {
+            users.push(User::new(
+                statement.read::<String>(1).unwrap(),
+                Some(statement.read::<i64>(0).unwrap()),
+            ))
+        }
+
+        logger!("{} user retrieved", users.len());
+
+        users
+    }
+
     fn add_wallet(&self, user_id: i64, wallet_address: String) -> bool {
         if !self.connected() {
             panic!("Connection error.");
@@ -135,6 +162,26 @@ impl DataRepository for SqliteDb {
         statement.next().unwrap();
 
         logger!("-> wallet added successfully");
+
+        true
+    }
+
+    fn remove_wallet(&self, user_id: i64, wallet_address: String) -> bool {
+        if !self.connected() {
+            panic!("Connection error.");
+        }
+
+        let connection = self.connection.as_ref().unwrap();
+
+        logger!("-> remove wallet {} for user {}...", wallet_address, user_id);
+
+        let mut statement = connection.prepare(r#"delete from wallets where address = :wallet_address;"#).unwrap();
+
+        statement.bind_by_name(":wallet_address", wallet_address.as_str()).unwrap();
+
+        statement.next().unwrap();
+
+        logger!("-> wallet removed successfully.");
 
         true
     }
@@ -270,7 +317,7 @@ impl DataRepository for SqliteDb {
         };
     }
 
-    fn get_all_transactions(&self) -> Vec<Transaction> {
+    fn get_all_transactions(&self, wallet_id: i64) -> Vec<Transaction> {
         let mut res = vec![];
 
         if !self.connected() {
@@ -281,7 +328,9 @@ impl DataRepository for SqliteDb {
 
         logger!("-> retrieving all transactions from database...");
 
-        let mut statement = connection.prepare(r#"select * from transactions;"#).unwrap();
+        let mut statement = connection.prepare(r#"select * from transactions where wallet_id = :wallet_id;"#).unwrap();
+
+        statement.bind_by_name(":wallet_id", wallet_id).unwrap();
 
         while let State::Row = statement.next().unwrap() {
             res.push(Transaction::read_from_statement(&statement));
@@ -312,6 +361,32 @@ impl DataRepository for SqliteDb {
                 statement.read::<String>(4).unwrap(),
                 Some(statement.read::<i64>(3).unwrap()),
             ));
+
+            res.push(wallet);
+        }
+
+        logger!("-> {} wallets retrieved.", res.len());
+
+        res
+    }
+
+    fn get_user_wallets(&self, user_id: i64) -> Vec<Wallet> {
+        let mut res = vec![];
+
+        if !self.connected() {
+            panic!("Connection error.");
+        }
+
+        let connection = self.connection.as_ref().unwrap();
+
+        logger!("-> retrieving wallets for user {} from database...", user_id);
+
+        let mut statement = connection.prepare(r#"select * from wallets where user_id = :user_id;"#).unwrap();
+
+        statement.bind_by_name(":user_id", user_id).unwrap();
+
+        while let State::Row = statement.next().unwrap() {
+            let wallet = Wallet::read_from_statement(&statement);
 
             res.push(wallet);
         }

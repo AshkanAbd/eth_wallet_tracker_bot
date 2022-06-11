@@ -75,6 +75,7 @@ pub async fn background_wallet_worker<R>(bot: &AutoSend<Bot>, chat_id: ChatId, w
 
     loop {
         if repo.get_wallet(Some(user_id), wallet_address.address.clone()).is_none() {
+            logger!("tracking wallet {} for user {} stopped.", wallet_address.address, user_id);
             break;
         }
 
@@ -82,20 +83,32 @@ pub async fn background_wallet_worker<R>(bot: &AutoSend<Bot>, chat_id: ChatId, w
 
         if let Ok(v) = trx_res {
             if let Some(d) = v.result.get(0) {
-                let trx = Transaction::new(
-                    d.from.to_owned(),
-                    d.to.to_owned(),
-                    d.value.to_owned(),
-                    d.hash.to_owned(),
-                    "ETH".to_string(),
-                    wallet_address.id.unwrap(),
-                    None,
-                    Some(d.isError != "0"),
-                );
+                let trx_amount = match d.value.parse::<f64>() {
+                    Ok(v) => {
+                        v
+                    }
+                    Err(_) => {
+                        0f64
+                    }
+                };
 
-                if repo.get_transaction(d.hash.to_owned(), wallet_address.id, Some("ETH".to_string())).is_none() {
-                    repo.add_transaction(trx);
-                    bot.send_message(chat_id, d.format_as_str().as_str()).await.unwrap();
+                if trx_amount != 0f64 {
+                    let trx = Transaction::new(
+                        d.from.to_owned(),
+                        d.to.to_owned(),
+                        d.value.to_owned(),
+                        d.hash.to_owned(),
+                        "ETH".to_string(),
+                        wallet_address.id.unwrap(),
+                        18i64,
+                        None,
+                        Some(d.isError != "0"),
+                    );
+
+                    if repo.get_transaction(d.hash.to_owned(), wallet_address.id, Some("ETH".to_string())).is_none() {
+                        repo.add_transaction(trx);
+                        bot.send_message(chat_id, d.format_as_str().as_str()).await.unwrap();
+                    }
                 }
             }
         }
@@ -111,6 +124,7 @@ pub async fn background_wallet_worker<R>(bot: &AutoSend<Bot>, chat_id: ChatId, w
                     d.hash.to_owned(),
                     d.tokenName.to_owned(),
                     wallet_address.id.unwrap(),
+                    d.tokenDecimal.parse::<i64>().unwrap_or(0i64),
                     None,
                     Some(true),
                 );
@@ -142,6 +156,28 @@ async fn check_erc(api_token: &str, wallet: &str) -> Result<EtherScanErc, reqwes
     let resp = reqwest::get(url).await?
         .json::<EtherScanErc>().await?;
     Ok(resp)
+}
+
+pub async fn notice_changelog<R>(bot: AutoSend<Bot>, repo: R) where R: DataRepository {
+    let users = repo.get_all_user();
+
+    let changelog = r#"
+Bot has been update here is usage:
+/start: Starts the bot
+/add <wallet>: adds the wallet to tracker
+/remove <wallet>: removes wallet and all it's data from the bot and stops tracker for the wallet
+/list: shows list of wallets that have been tracked for you
+/txlist <address>: shows list of transactions for the wallet by the tracker.
+Update(s): 
+[+] fix bug in reporting 0 ETH txs.
+[+] fix bug in not reporting some ERC20 tokens txs.
+    "#;
+
+    for user in users {
+        if let Ok(chat_id) = user.chat_id.parse::<i64>() {
+            bot.send_message(ChatId(chat_id), changelog).await.unwrap();
+        }
+    }
 }
 
 pub async fn start_previous_workers<R>(bot: AutoSend<Bot>, repo: R) where R: DataRepository {

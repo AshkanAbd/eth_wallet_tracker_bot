@@ -13,7 +13,7 @@ use crate::commands::{Command};
 use structopt::StructOpt;
 use teloxide::{prelude::*, utils::command::BotCommands};
 use crate::command_handler::{handler};
-use crate::common::{start_previous_workers};
+use crate::common::{notice_changelog, start_previous_workers};
 use crate::repositories::sqlite_db::SqliteDb;
 
 #[tokio::main]
@@ -23,10 +23,12 @@ async fn main() {
     logger!("Starting bot...");
     let bot = Bot::new(app_config.bot_token).auto_send();
 
-    let db = SqliteDb::get_connection();
+    let worker_db = SqliteDb::get_connection();
+    let notice_db = SqliteDb::get_connection();
     let bot_clone = bot.clone();
 
-    start_previous_workers::<SqliteDb>(bot_clone, db).await;
+    notice_changelog::<SqliteDb>(bot_clone.clone(), notice_db).await;
+    start_previous_workers::<SqliteDb>(bot_clone, worker_db).await;
 
     teloxide::commands_repl(bot, handler, Command::ty()).await;
 }
